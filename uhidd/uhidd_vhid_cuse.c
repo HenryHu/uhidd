@@ -521,8 +521,34 @@ vhid_ioctl(struct cuse_dev *cdev, int fflags, unsigned long cmd,
 		err = cuse_copy_out(vd->vd_rdesc, ugd.ugd_data, (int)size);
 		break;
 
+    case USB_GET_REPORT:
+        {
+            err = cuse_copy_in(peer_data, &ugd, sizeof(ugd));
+            if (err != CUSE_ERR_NONE)
+                break;
+
+            if (ugd.ugd_data == NULL)
+                break;
+
+            struct rqueue *rq = &vd->vd_rq;
+            unsigned char buf[VHID_MAX_REPORT_SIZE];
+            int n;
+
+            VHID_LOCK(vd);
+            if (rq->cc > 0) {
+                rq_dequeue(rq, buf, &n);
+                VHID_UNLOCK(vd);
+            } else {
+                VHID_UNLOCK(vd);
+                err = CUSE_ERR_INVALID;
+                break;
+            }
+            if (n > ugd.ugd_maxlen)
+                n = ugd.ugd_maxlen;
+            err = cuse_copy_out(buf, ugd.ugd_data, n);
+            break;
+        }
 	case USB_SET_IMMED:
-	case USB_GET_REPORT:
 	case USB_SET_REPORT:
 		err = CUSE_ERR_INVALID;	/* not supported. */
 		break;
