@@ -78,6 +78,8 @@ struct vhid_dev {
 	unsigned char	vd_rdesc[VHID_MAX_REPORT_DESC_SIZE];
 	uint16_t	vd_rsz;
 	int		vd_rid;
+	unsigned char   vd_last_report[VHID_MAX_REPORT_SIZE];
+	int	 vd_last_len;
 	pthread_mutex_t vd_mtx;
 	pthread_cond_t	vd_cv;
 };
@@ -152,6 +154,9 @@ vhid_attach(struct hid_appcol *ha)
 	rq_reset(&vd->vd_rq);
 
 	hid_appcol_set_private(ha, vd);
+
+	memset(vd->vd_last_report, 0, sizeof(vd->vd_last_report));
+	vd->vd_last_len = 0;
 
 	/*
 	 * Create a new virtual hid device.
@@ -237,6 +242,9 @@ vhid_recv_raw(struct hid_appcol *ha, uint8_t *buf, int len)
 	}
 
 	VHID_LOCK(vd);
+	memcpy(vd->vd_last_report, buf, len);
+	vd->vd_last_len = len;
+
 	rq_enqueue(&vd->vd_rq, buf, len);
 	VHID_UNLOCK(vd);
 
@@ -521,33 +529,25 @@ vhid_ioctl(struct cuse_dev *cdev, int fflags, unsigned long cmd,
 		err = cuse_copy_out(vd->vd_rdesc, ugd.ugd_data, (int)size);
 		break;
 
-    case USB_GET_REPORT:
-        {
-            err = cuse_copy_in(peer_data, &ugd, sizeof(ugd));
-            if (err != CUSE_ERR_NONE)
-                break;
+	case USB_GET_REPORT:
+		{
+			err = cuse_copy_in(peer_data, &ugd, sizeof(ugd));
+			if (err != CUSE_ERR_NONE)
+				break;
 
-            if (ugd.ugd_data == NULL)
-                break;
+			if (ugd.ugd_data == NULL)
+				break;
 
-            struct rqueue *rq = &vd->vd_rq;
-            unsigned char buf[VHID_MAX_REPORT_SIZE];
-            int n;
+			int n;
 
-            VHID_LOCK(vd);
-            if (rq->cc > 0) {
-                rq_dequeue(rq, buf, &n);
-                VHID_UNLOCK(vd);
-            } else {
-                VHID_UNLOCK(vd);
-                err = CUSE_ERR_INVALID;
-                break;
-            }
-            if (n > ugd.ugd_maxlen)
-                n = ugd.ugd_maxlen;
-            err = cuse_copy_out(buf, ugd.ugd_data, n);
-            break;
-        }
+			VHID_LOCK(vd);
+			n = vd->vd_last_len;
+			if (n > ugd.ugd_maxlen)
+				n = ugd.ugd_maxlen;
+			err = cuse_copy_out(vd->vd_last_report, ugd.ugd_data, n);
+			VHID_UNLOCK(vd);
+			break;
+		}
 	case USB_SET_IMMED:
 	case USB_SET_REPORT:
 		err = CUSE_ERR_INVALID;	/* not supported. */
